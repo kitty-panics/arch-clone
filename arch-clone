@@ -51,6 +51,13 @@ configfile="$current_directory/settings.conf"
 
 source "$configfile"
 
+# DISTRO comes from settings.conf (distro_name). Fall back to "Arch" if unset or empty.
+if [[ -z "$distro_name" ]]; then
+	DISTRO="Arch"
+else
+	DISTRO="$distro_name"
+fi
+
 snapshot_excludes="$current_directory/exclude.conf"
 grub_template="$current_directory/grub.cfg"
 splash_image="$current_directory/splash.png"
@@ -148,26 +155,26 @@ rebuild_initrd() {
 	#-k $(ls -1 /usr/lib/modules | head -n 1)
 }
 
-set_distro_name() {
-	DISTRO="Arch"
-
-	while true ; do
-		echo "This is the distribution name that will appear in the boot menu for the
-live image. You can change it to something else, or you can blank this,
-and the the menu entries will just say \"GNU/Linux <kernel-version>\""
-		# Redirect stderr from the error log to the screen,
-		# so we can see the prompts from read.
-		exec 2>&1
-		read -p "Enter, erase or change distro name: " -i "$DISTRO" -e answer
-		# Resume logging errors.
-		exec 2>>"$error_log"
-		break
-	done
-
-	if ! [[ -z "$answer" ]]; then
-		DISTRO="$answer"
-	fi
-}
+#set_distro_name() {
+#	DISTRO="Arch"
+#
+#	while true ; do
+#		echo "This is the distribution name that will appear in the boot menu for the
+#live image. You can change it to something else, or you can blank this,
+#and the the menu entries will just say \"GNU/Linux <kernel-version>\""
+#		# Redirect stderr from the error log to the screen,
+#		# so we can see the prompts from read.
+#		exec 2>&1
+#		read -p "Enter, erase or change distro name: " -i "$DISTRO" -e answer
+#		# Resume logging errors.
+#		exec 2>>"$error_log"
+#		break
+#	done
+#
+#	if ! [[ -z "$answer" ]]; then
+#		DISTRO="$answer"
+#	fi
+#}
 
 housekeeping() {
 	# Check that kernel and initrd exist
@@ -199,7 +206,7 @@ copy_kernelinitrd() {
 }
 
 copy_filesystem() {
-	rsync -avX / fs/ --exclude="$work_dir" --exclude="$snapshot_dir" --exclude="$efi_work" --exclude-from="$snapshot_excludes"
+	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable / fs/ --exclude="$work_dir" --exclude="$snapshot_dir" --exclude="$efi_work" --exclude-from="$snapshot_excludes"
 }
 
 edit_system() {
@@ -252,7 +259,7 @@ iface lo inet loopback" > "$work_dir"/fs/etc/network/interfaces
 }
 
 get_filename() {
-	snapshot_datetime=$(date +%Y%m%d_%H%M)
+	snapshot_datetime=$(date +%Y%m%d)
 	filename="$snapshot_basename"-"$snapshot_datetime".iso
 }
 
@@ -336,8 +343,8 @@ EOF
 	popd
 
 	# Copy files to iso
-	rsync -avx "$efi_work"/boot "$work_dir"/iso/
-	rsync -avx "$efi_work"/efi  "$work_dir"/iso/
+	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/boot "$work_dir"/iso/
+	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/efi  "$work_dir"/iso/
 	cp "$grub_template" "$work_dir"/iso/boot/grub/grub.cfg
 }
 
@@ -386,53 +393,47 @@ cleanup() {
 	rm -rf "$work_dir"
 }
 
-check_dependencies() {
-	grub_installed="true"
-	dosfstools_installed="true"
-	echo "Checking for required packages: grub, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv..."
-	if sudo pacman -Q grub &>/dev/null; then
-		echo "The grub package is installed"
-	else
-		echo "The grub package is not installed, installing..."
-		pacman -Syu grub --noconfirm
-	fi
-	if sudo pacman -Q dosfstools &>/dev/null; then
-		echo "The dosfstools package is installed"
-	else
-		echo "The dosfstools package is not installed, installing..."
-		pacman -Syu dosfstools --noconfirm
-	fi
-	if sudo pacman -Q mkinitcpio-archiso &>/dev/null; then
-		echo "The mkinitcpio-archiso package is installed"
-	else
-		echo "The mkinitcpio-archiso package is not installed, installing..."
-		pacman -Syu mkinitcpio-archiso --noconfirm
-	fi
-	if sudo pacman -Q squashfs-tools &>/dev/null; then
-		echo "The squashfs-tools package is installed"
-	else
-		echo "The squashfs-tools package is not installed, installing..."
-		pacman -Syu squashfs-tools --noconfirm
-	fi
-	if sudo pacman -Q xorriso &>/dev/null; then
-		echo "The xorriso package is installed"
-	else
-		echo "The xorriso package is not installed, installing..."
-		pacman -Syu xorriso --noconfirm
-	fi
-	if sudo pacman -Q rsync &>/dev/null; then
-		echo "The rsync package is installed"
-	else
-		echo "The rsync package is not installed, installing..."
-		pacman -Syu rsync --noconfirm
-	fi
-	if sudo pacman -Q pv &>/dev/null; then
-		echo "The pv package is installed"
-	else
-		echo "The pv package is not installed, installing..."
-		pacman -Syu pv --noconfirm
-	fi
-}
+#check_dependencies() {
+#	grub_installed="true"
+#	dosfstools_installed="true"
+#	echo "Checking for required packages: grub, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync..."
+#	if sudo pacman -Q grub &>/dev/null; then
+#		echo "The grub package is installed"
+#	else
+#		echo "The grub package is not installed, installing..."
+#		pacman -Syu grub --noconfirm
+#	fi
+#	if sudo pacman -Q dosfstools &>/dev/null; then
+#		echo "The dosfstools package is installed"
+#	else
+#		echo "The dosfstools package is not installed, installing..."
+#		pacman -Syu dosfstools --noconfirm
+#	fi
+#	if sudo pacman -Q mkinitcpio-archiso &>/dev/null; then
+#		echo "The mkinitcpio-archiso package is installed"
+#	else
+#		echo "The mkinitcpio-archiso package is not installed, installing..."
+#		pacman -Syu mkinitcpio-archiso --noconfirm
+#	fi
+#	if sudo pacman -Q squashfs-tools &>/dev/null; then
+#		echo "The squashfs-tools package is installed"
+#	else
+#		echo "The squashfs-tools package is not installed, installing..."
+#		pacman -Syu squashfs-tools --noconfirm
+#	fi
+#	if sudo pacman -Q xorriso &>/dev/null; then
+#		echo "The xorriso package is installed"
+#	else
+#		echo "The xorriso package is not installed, installing..."
+#		pacman -Syu xorriso --noconfirm
+#	fi
+#	if sudo pacman -Q rsync &>/dev/null; then
+#		echo "The rsync package is installed"
+#	else
+#		echo "The rsync package is not installed, installing..."
+#		pacman -Syu rsync --noconfirm
+#	fi
+#}
 
 choose_task() {
 	while true; do
@@ -446,7 +447,7 @@ choose_task() {
 			echo "This may take a moment while the program checks for free space.    "
 			check_copies
 			check_directories
-			set_distro_name
+			#set_distro_name
 			housekeeping
 			cd "$work_dir"
 			copy_kernelinitrd
@@ -470,7 +471,5 @@ choose_task() {
 	done
 }
 
-check_dependencies
+#check_dependencies
 choose_task
-
-
