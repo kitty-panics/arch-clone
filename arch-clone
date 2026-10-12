@@ -6,6 +6,9 @@
 # License: GPL-3
 # This is free software with NO WARRANTY. Use at your own risk!
 
+#	Required Packages:
+#	grub, mtools, grub-theme-vimix, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv
+
 version="2.0.0"
 
 help_text="Usage: $0 [option]
@@ -158,27 +161,6 @@ rebuild_initrd() {
 	#-k $(ls -1 /usr/lib/modules | head -n 1)
 }
 
-#set_distro_name() {
-#	DISTRO="Arch"
-#
-#	while true ; do
-#		echo "This is the distribution name that will appear in the boot menu for the
-#live image. You can change it to something else, or you can blank this,
-#and the the menu entries will just say \"GNU/Linux <kernel-version>\""
-#		# Redirect stderr from the error log to the screen,
-#		# so we can see the prompts from read.
-#		exec 2>&1
-#		read -p "Enter, erase or change distro name: " -i "$DISTRO" -e answer
-#		# Resume logging errors.
-#		exec 2>>"$error_log"
-#		break
-#	done
-#
-#	if ! [[ -z "$answer" ]]; then
-#		DISTRO="$answer"
-#	fi
-#}
-
 housekeeping() {
 	# Check that kernel and initrd exist
 	if [[ -e "$kernel_image" ]]; then
@@ -213,10 +195,6 @@ copy_filesystem() {
 }
 
 edit_system() {
-	# Truncate logs, remove archived logs.
-	#find fs/var/log -name "*gz" -print0 | xargs -0r rm -f
-	#find fs/var/log/ -type f -exec truncate -s 0 {} \;
-
 	# /etc/fstab should exist, even if it's empty,
 	# to prevent error messages at boot
 	mv "$work_dir"/fs/etc/fstab "$work_dir"/fs/etc/fstab.bak
@@ -248,110 +226,12 @@ edit_system() {
 	mkdir -v "$work_dir"/fs/dev/shm
 	mkdir -v "$work_dir"/fs/dev/pts
 	chmod 1777 "$work_dir"/fs/dev/shm
-
-	# Clear configs from /etc/network/interfaces, wicd and NetworkManager
-	# connman and netman, so they aren't stealthily included in the snapshot.
-	#echo "Clearing network configuration..."
-	#echo "# The loopback network interface\nauto lo\niface lo inet loopback" > "$work_dir"/fs/etc/network/interfaces
-	#rm -f "$work_dir"/fs/var/lib/wicd/configurations/*
-	#rm -f "$work_dir"/fs/etc/wicd/wireless-settings.conf
-	#rm -f "$work_dir"/fs/etc/NetworkManager/system-connections/*
-	#rm -f "$work_dir"/fs/etc/network/wifi/*
-	#rm -rf "$work_dir"/fs/var/lib/connman/*
 }
 
 get_filename() {
 	snapshot_datetime=$(date +%Y%m%d)
 	filename="$snapshot_basename"-"$snapshot_datetime".iso
 }
-
-#mkefi() {
-#	tempdir="$(mktemp -d /tmp/work_temp.XXXX)"
-#	root_id="$snapshot_datetime".uuid
-#
-#	# for initial grub.cfg
-#	mkdir -p "$tempdir"/boot/grub
-#
-#	cat >"$tempdir"/boot/grub/grub.cfg <<EOF
-#search --file --set=root /boot/grub/$root_id
-#set prefix=(\$root)/boot/grub
-#source \$prefix/x86_64-efi/grub.cfg
-#EOF
-#
-#	if ! [ -d "$efi_work" ]; then
-#		mkdir "$efi_work"
-#	fi
-#
-#	pushd "$efi_work"
-#		# start with empty directories.
-#		if [ -d "boot" ]; then
-#			rm -rf boot
-#		fi
-#		if [ -d "efi" ]; then
-#			rm -rf efi
-#		fi
-#		mkdir -p boot/grub/x86_64-efi
-#		mkdir -p efi/boot
-#
-#		# create root id file in /boot/grub
-#		: > boot/grub/$root_id
-#
-#		# copy splash
-#		cp $splash_image boot/grub/splash.png
-#
-#		# second grub.cfg file
-#		for i in $(ls /usr/lib/grub/x86_64-efi|grep part_|grep \.mod|sed 's/.mod//'); do echo "insmod $i" >> boot/grub/x86_64-efi/grub.cfg; done
-#		# Additional modules so we don't boot in blind mode. I don't know which ones are really needed.
-#		for i in efi_gop efi_uga ieee1275_fb vbe vga video_bochs video_cirrus jpeg png gfxterm ; do echo "insmod $i" >> boot/grub/x86_64-efi/grub.cfg ; done
-#
-#		echo "source /boot/grub/grub.cfg" >> boot/grub/x86_64-efi/grub.cfg
-#
-#		pushd "$tempdir"
-#			# make a tarred "memdisk" to embed in the grub image
-#			tar -cvf memdisk boot
-#
-#			# make the grub image
-#			grub-mkimage -O "x86_64-efi" -m "memdisk" -o "bootx64.efi" -p '(memdisk)/boot/grub' \
-#						search iso9660 configfile normal memdisk tar \
-#						part_msdos part_gpt fat ext2 \
-#						chain boot linux linuxefi
-#		popd
-#
-#		# copy the grub image to efi/boot (to go later in the device's root)
-#		cp "$tempdir"/bootx64.efi efi/boot
-#
-#		#######################
-#		## Make the boot image "boot/grub/efiboot.img"
-#		dd if=/dev/zero of=boot/grub/efiboot.img bs=1K count=1440
-#		mkdosfs -F 12 boot/grub/efiboot.img
-#		mkdir img-mnt
-#		mount -o loop boot/grub/efiboot.img img-mnt
-#		mkdir -p img-mnt/efi/boot
-#		cp "$tempdir"/bootx64.efi img-mnt/efi/boot/
-#		umount img-mnt
-#		rm -rf img-mnt
-#		#######################
-#
-#		# copy modules and font
-#		cp /usr/lib/grub/x86_64-efi/* boot/grub/x86_64-efi/
-#
-#		# if this doesn't work try another font from the same place (grub's default, unicode.pf2, is much larger)
-#		# Either of these will work, and they look the same to me. Unicode seems to work with qemu. -fsr
-#		# cp /usr/share/grub/ascii.pf2 boot/grub/font.pf2
-#		cp /usr/share/grub/unicode.pf2 boot/grub/font.pf2
-#
-#		# doesn't need to be root-owned
-#		chown -R 1000:1000 $(pwd) 2>/dev/null
-#
-#		# Cleanup
-#		rm -rf "$tempdir"
-#	popd
-#
-#	# Copy files to iso
-#	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/boot "$work_dir"/iso/
-#	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/efi  "$work_dir"/iso/
-#	cp "$grub_template" "$work_dir"/iso/boot/grub/grub.cfg
-#}
 
 prepare_grub_files() {
 	# Copy GRUB template, fonts, themes
@@ -367,18 +247,6 @@ set_boot_options() {
 	sed -i "s:\${initrd_image}:${initrd_image##*/}:g" "$work_dir"/iso/boot/grub/grub.cfg
 	sed -i "s:\${volid}:$volid:g" "$work_dir"/iso/boot/grub/grub.cfg
 }
-
-#edit_iso_files() {
-#	if [[ $edit_iso_files = "yes" ]]; then
-#		# Redirect stderr from the error log to the screen,
-#		# so we can see the prompts from read.
-#		exec 2>&1
-#		echo
-#		read -p "You may now edit any files in the $work_dir directory. When done hit ENTER to continue..."
-#		# Resume logging errors.
-#		exec 2>>"$error_log"
-#	fi
-#}
 
 squash_filesystem() {
 	echo "Squashing the filesystem..."
@@ -403,54 +271,6 @@ cleanup() {
 	rm -rf "$work_dir"
 }
 
-#check_dependencies() {
-#	grub_installed="true"
-#	dosfstools_installed="true"
-#	echo "Checking for required packages: grub, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv..."
-#	if sudo pacman -Q grub &>/dev/null; then
-#		echo "The grub package is installed"
-#	else
-#		echo "The grub package is not installed, installing..."
-#		pacman -Syu grub --noconfirm
-#	fi
-#	if sudo pacman -Q dosfstools &>/dev/null; then
-#		echo "The dosfstools package is installed"
-#	else
-#		echo "The dosfstools package is not installed, installing..."
-#		pacman -Syu dosfstools --noconfirm
-#	fi
-#	if sudo pacman -Q mkinitcpio-archiso &>/dev/null; then
-#		echo "The mkinitcpio-archiso package is installed"
-#	else
-#		echo "The mkinitcpio-archiso package is not installed, installing..."
-#		pacman -Syu mkinitcpio-archiso --noconfirm
-#	fi
-#	if sudo pacman -Q squashfs-tools &>/dev/null; then
-#		echo "The squashfs-tools package is installed"
-#	else
-#		echo "The squashfs-tools package is not installed, installing..."
-#		pacman -Syu squashfs-tools --noconfirm
-#	fi
-#	if sudo pacman -Q xorriso &>/dev/null; then
-#		echo "The xorriso package is installed"
-#	else
-#		echo "The xorriso package is not installed, installing..."
-#		pacman -Syu xorriso --noconfirm
-#	fi
-#	if sudo pacman -Q rsync &>/dev/null; then
-#		echo "The rsync package is installed"
-#	else
-#		echo "The rsync package is not installed, installing..."
-#		pacman -Syu rsync --noconfirm
-#	fi
-#	if sudo pacman -Q pv &>/dev/null; then
-#		echo "The pv package is installed"
-#	else
-#		echo "The pv package is not installed, installing..."
-#		pacman -Syu pv --noconfirm
-#	fi
-#}
-
 choose_task() {
 	while true; do
 		echo "Choose a task.
@@ -460,10 +280,9 @@ choose_task() {
 		read ans
 		case $ans in
 		1) # Create snapshot
-			echo "This may take a moment while the program checks for free space.    "
+			echo "This may take a moment while the program checks for free space."
 			check_copies
 			check_directories
-			#set_distro_name
 			housekeeping
 			cd "$work_dir"
 			copy_kernelinitrd
@@ -471,22 +290,16 @@ choose_task() {
 			rebuild_initrd
 			edit_system
 			get_filename
-			#mkefi
 			prepare_grub_files
 			set_boot_options
-			#if [[ $edit_iso_files = "yes" ]]; then
-			#	edit_iso_files
-			#fi
 			squash_filesystem
 			make_iso_fs
 			cleanup
 			echo -e "\n\tAll finished!\n"
 			exit 0 ;;
 		[2qQxX]) exit 0 ;;
-
 		esac
 	done
 }
 
-#check_dependencies
 choose_task
