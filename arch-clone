@@ -57,6 +57,8 @@ if [[ -z "$distro_name" ]]; then
 else
 	DISTRO="$distro_name"
 fi
+# Default ISO label, GRUB uses it to find the ISO
+[[ -n "$volid" ]] || volid="archlive"
 
 snapshot_excludes="$current_directory/exclude.conf"
 grub_template="$current_directory/grub.cfg"
@@ -70,8 +72,8 @@ echo "Splash image file: $splash_image"
 # Record errors in a logfile.
 exec 2>"$error_log"
 
-if [[ $DEBUG = "yes" ]]; then
-        set -x
+if [[ "$DEBUG" = "yes" ]]; then
+  set -x
 fi
 
 check_copies() {
@@ -92,8 +94,7 @@ check_copies() {
 	fi
 
 	# Create a message to say whether the filesystem copy will be saved or not.
-	save_message=$(echo "* The temporary copy of the filesystem will be created
-at $work_dir/fs and removed when this program finishes.")
+	save_message=$(echo "* The temporary copy of the filesystem will be created\nat $work_dir/fs and removed when this program finishes.")
 }
 
 check_directories() {
@@ -211,11 +212,12 @@ copy_filesystem() {
 
 edit_system() {
 	# Truncate logs, remove archived logs.
-	find fs/var/log -name "*gz" -print0 | xargs -0r rm -f
-	find fs/var/log/ -type f -exec truncate -s 0 {} \;
+	#find fs/var/log -name "*gz" -print0 | xargs -0r rm -f
+	#find fs/var/log/ -type f -exec truncate -s 0 {} \;
 
 	# /etc/fstab should exist, even if it's empty,
 	# to prevent error messages at boot
+	mv "$work_dir"/fs/etc/fstab "$work_dir"/fs/etc/fstab.bak
 	touch "$work_dir"/fs/etc/fstab
 
 	# Blank out systemd machine id. If it does not exist, systemd-journald
@@ -247,15 +249,13 @@ edit_system() {
 
 	# Clear configs from /etc/network/interfaces, wicd and NetworkManager
 	# connman and netman, so they aren't stealthily included in the snapshot.
-	echo "Clearing network configuration..."
-	echo "# The loopback network interface
-auto lo
-iface lo inet loopback" > "$work_dir"/fs/etc/network/interfaces
-	rm -f "$work_dir"/fs/var/lib/wicd/configurations/*
-	rm -f "$work_dir"/fs/etc/wicd/wireless-settings.conf
-	rm -f "$work_dir"/fs/etc/NetworkManager/system-connections/*
-	rm -f "$work_dir"/fs/etc/network/wifi/*
-	rm -rf "$work_dir"/fs/var/lib/connman/*
+	#echo "Clearing network configuration..."
+	#echo "# The loopback network interface\nauto lo\niface lo inet loopback" > "$work_dir"/fs/etc/network/interfaces
+	#rm -f "$work_dir"/fs/var/lib/wicd/configurations/*
+	#rm -f "$work_dir"/fs/etc/wicd/wireless-settings.conf
+	#rm -f "$work_dir"/fs/etc/NetworkManager/system-connections/*
+	#rm -f "$work_dir"/fs/etc/network/wifi/*
+	#rm -rf "$work_dir"/fs/var/lib/connman/*
 }
 
 get_filename() {
@@ -309,7 +309,10 @@ EOF
 			tar -cvf memdisk boot
 
 			# make the grub image
-			grub-mkimage -O "x86_64-efi" -m "memdisk" -o "bootx64.efi" -p '(memdisk)/boot/grub' search iso9660 configfile normal memdisk tar cat part_msdos part_gpt fat ext2 ntfs ntfscomp hfsplus chain boot linux
+			grub-mkimage -O "x86_64-efi" -m "memdisk" -o "bootx64.efi" -p '(memdisk)/boot/grub' \
+									search iso9660 configfile normal memdisk tar \
+									part_msdos part_gpt fat exfat ext2 ext4 \
+									chain boot linux linuxefi
 		popd
 
 		# copy the grub image to efi/boot (to go later in the device's root)
@@ -349,7 +352,6 @@ EOF
 }
 
 set_boot_options() {
-	[[ -n "$volid" ]] || volid="liveiso"
 	# Modify the boot menu.
 	sed -i "s:\${DISTRO}:$DISTRO:g" "$work_dir"/iso/boot/grub/grub.cfg
 	sed -i "s:\${kernel_image}:${kernel_image##*/}:g" "$work_dir"/iso/boot/grub/grub.cfg
@@ -357,22 +359,22 @@ set_boot_options() {
 	sed -i "s:\${volid}:$volid:g" "$work_dir"/iso/boot/grub/grub.cfg
 }
 
-edit_iso_files() {
-	if [[ $edit_iso_files = "yes" ]]; then
-		# Redirect stderr from the error log to the screen,
-		# so we can see the prompts from read.
-		exec 2>&1
-		echo
-		read -p "You may now edit any files in the $work_dir directory. When done hit ENTER to continue..."
-		# Resume logging errors.
-		exec 2>>"$error_log"
-	fi
-}
+#edit_iso_files() {
+#	if [[ $edit_iso_files = "yes" ]]; then
+#		# Redirect stderr from the error log to the screen,
+#		# so we can see the prompts from read.
+#		exec 2>&1
+#		echo
+#		read -p "You may now edit any files in the $work_dir directory. When done hit ENTER to continue..."
+#		# Resume logging errors.
+#		exec 2>>"$error_log"
+#	fi
+#}
 
 squash_filesystem() {
 	echo "Squashing the filesystem..."
-	mksquashfs fs/ iso/arch/x86_64/airootfs.sfs ${mksq_comp} -noappend \
-	|| { echo -e "\n Error: mksquashfs failed. Exiting..."  ; exit 1 ; }
+	mksquashfs fs/ iso/arch/x86_64/airootfs.sfs ${mksq_comp} -noappend -b 1M \
+	|| { echo -e "\n Error: mksquashfs failed. Exiting..." ; exit 1 ; }
 
 	# This code is redundant, because $work_dir gets removed later, but
 	# it might help by making more space on the hard drive for the iso.
@@ -381,7 +383,6 @@ squash_filesystem() {
 
 make_iso_fs() {
 	echo "Creating ISO: "$snapshot_dir"/"$filename""
-	[[ -n "$volid" ]] || volid="liveiso"
 	xorriso -as mkisofs -r -J -joliet-long -iso-level 3 -e boot/grub/efiboot.img -no-emul-boot \
 	-V "$volid" -o "$snapshot_dir"/"$filename" iso/
 	sync
@@ -396,7 +397,7 @@ cleanup() {
 #check_dependencies() {
 #	grub_installed="true"
 #	dosfstools_installed="true"
-#	echo "Checking for required packages: grub, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync..."
+#	echo "Checking for required packages: grub, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv..."
 #	if sudo pacman -Q grub &>/dev/null; then
 #		echo "The grub package is installed"
 #	else
@@ -433,6 +434,12 @@ cleanup() {
 #		echo "The rsync package is not installed, installing..."
 #		pacman -Syu rsync --noconfirm
 #	fi
+#	if sudo pacman -Q pv &>/dev/null; then
+#		echo "The pv package is installed"
+#	else
+#		echo "The pv package is not installed, installing..."
+#		pacman -Syu pv --noconfirm
+#	fi
 #}
 
 choose_task() {
@@ -457,9 +464,9 @@ choose_task() {
 			get_filename
 			mkefi
 			set_boot_options
-			if [[ $edit_iso_files = "yes" ]]; then
-				edit_iso_files
-			fi
+			#if [[ $edit_iso_files = "yes" ]]; then
+			#	edit_iso_files
+			#fi
 			squash_filesystem
 			make_iso_fs
 			cleanup
