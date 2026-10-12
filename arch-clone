@@ -6,7 +6,7 @@
 # License: GPL-3
 # This is free software with NO WARRANTY. Use at your own risk!
 
-version="1.0.0"
+version="2.0.0"
 
 help_text="Usage: $0 [option]
 
@@ -129,8 +129,10 @@ check_directories() {
 	fi
 	mkdir -p "$work_dir"/iso/arch/boot/x86_64
 	mkdir -p "$work_dir"/iso/arch/x86_64
+	mkdir -p "$work_dir"/iso/boot/grub
+	mkdir -p "$work_dir"/iso/boot/grub/fonts
+	mkdir -p "$work_dir"/iso/boot/grub/themes
 	mkdir -p "$work_dir"/fs
-	efi_work="${work_dir}/efi-files"
 }
 
 rebuild_initrd() {
@@ -207,7 +209,7 @@ copy_kernelinitrd() {
 }
 
 copy_filesystem() {
-	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable / fs/ --exclude="$work_dir" --exclude="$snapshot_dir" --exclude="$efi_work" --exclude-from="$snapshot_excludes"
+	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable / fs/ --exclude="$work_dir" --exclude="$snapshot_dir" --exclude-from="$snapshot_excludes"
 }
 
 edit_system() {
@@ -263,92 +265,99 @@ get_filename() {
 	filename="$snapshot_basename"-"$snapshot_datetime".iso
 }
 
-mkefi() {
-	tempdir="$(mktemp -d /tmp/work_temp.XXXX)"
-	root_id="$snapshot_datetime".uuid
+#mkefi() {
+#	tempdir="$(mktemp -d /tmp/work_temp.XXXX)"
+#	root_id="$snapshot_datetime".uuid
+#
+#	# for initial grub.cfg
+#	mkdir -p "$tempdir"/boot/grub
+#
+#	cat >"$tempdir"/boot/grub/grub.cfg <<EOF
+#search --file --set=root /boot/grub/$root_id
+#set prefix=(\$root)/boot/grub
+#source \$prefix/x86_64-efi/grub.cfg
+#EOF
+#
+#	if ! [ -d "$efi_work" ]; then
+#		mkdir "$efi_work"
+#	fi
+#
+#	pushd "$efi_work"
+#		# start with empty directories.
+#		if [ -d "boot" ]; then
+#			rm -rf boot
+#		fi
+#		if [ -d "efi" ]; then
+#			rm -rf efi
+#		fi
+#		mkdir -p boot/grub/x86_64-efi
+#		mkdir -p efi/boot
+#
+#		# create root id file in /boot/grub
+#		: > boot/grub/$root_id
+#
+#		# copy splash
+#		cp $splash_image boot/grub/splash.png
+#
+#		# second grub.cfg file
+#		for i in $(ls /usr/lib/grub/x86_64-efi|grep part_|grep \.mod|sed 's/.mod//'); do echo "insmod $i" >> boot/grub/x86_64-efi/grub.cfg; done
+#		# Additional modules so we don't boot in blind mode. I don't know which ones are really needed.
+#		for i in efi_gop efi_uga ieee1275_fb vbe vga video_bochs video_cirrus jpeg png gfxterm ; do echo "insmod $i" >> boot/grub/x86_64-efi/grub.cfg ; done
+#
+#		echo "source /boot/grub/grub.cfg" >> boot/grub/x86_64-efi/grub.cfg
+#
+#		pushd "$tempdir"
+#			# make a tarred "memdisk" to embed in the grub image
+#			tar -cvf memdisk boot
+#
+#			# make the grub image
+#			grub-mkimage -O "x86_64-efi" -m "memdisk" -o "bootx64.efi" -p '(memdisk)/boot/grub' \
+#						search iso9660 configfile normal memdisk tar \
+#						part_msdos part_gpt fat ext2 \
+#						chain boot linux linuxefi
+#		popd
+#
+#		# copy the grub image to efi/boot (to go later in the device's root)
+#		cp "$tempdir"/bootx64.efi efi/boot
+#
+#		#######################
+#		## Make the boot image "boot/grub/efiboot.img"
+#		dd if=/dev/zero of=boot/grub/efiboot.img bs=1K count=1440
+#		mkdosfs -F 12 boot/grub/efiboot.img
+#		mkdir img-mnt
+#		mount -o loop boot/grub/efiboot.img img-mnt
+#		mkdir -p img-mnt/efi/boot
+#		cp "$tempdir"/bootx64.efi img-mnt/efi/boot/
+#		umount img-mnt
+#		rm -rf img-mnt
+#		#######################
+#
+#		# copy modules and font
+#		cp /usr/lib/grub/x86_64-efi/* boot/grub/x86_64-efi/
+#
+#		# if this doesn't work try another font from the same place (grub's default, unicode.pf2, is much larger)
+#		# Either of these will work, and they look the same to me. Unicode seems to work with qemu. -fsr
+#		# cp /usr/share/grub/ascii.pf2 boot/grub/font.pf2
+#		cp /usr/share/grub/unicode.pf2 boot/grub/font.pf2
+#
+#		# doesn't need to be root-owned
+#		chown -R 1000:1000 $(pwd) 2>/dev/null
+#
+#		# Cleanup
+#		rm -rf "$tempdir"
+#	popd
+#
+#	# Copy files to iso
+#	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/boot "$work_dir"/iso/
+#	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/efi  "$work_dir"/iso/
+#	cp "$grub_template" "$work_dir"/iso/boot/grub/grub.cfg
+#}
 
-	# for initial grub.cfg
-	mkdir -p "$tempdir"/boot/grub
-
-	cat >"$tempdir"/boot/grub/grub.cfg <<EOF
-search --file --set=root /boot/grub/$root_id
-set prefix=(\$root)/boot/grub
-source \$prefix/x86_64-efi/grub.cfg
-EOF
-
-	if ! [ -d "$efi_work" ]; then
-		mkdir "$efi_work"
-	fi
-
-	pushd "$efi_work"
-		# start with empty directories.
-		if [ -d "boot" ]; then
-			rm -rf boot
-		fi
-		if [ -d "efi" ]; then
-			rm -rf efi
-		fi
-		mkdir -p boot/grub/x86_64-efi
-		mkdir -p efi/boot
-
-		# create root id file in /boot/grub
-		: > boot/grub/$root_id
-
-		# copy splash
-		cp $splash_image boot/grub/splash.png
-
-		# second grub.cfg file
-		for i in $(ls /usr/lib/grub/x86_64-efi|grep part_|grep \.mod|sed 's/.mod//'); do echo "insmod $i" >> boot/grub/x86_64-efi/grub.cfg; done
-		# Additional modules so we don't boot in blind mode. I don't know which ones are really needed.
-		for i in efi_gop efi_uga ieee1275_fb vbe vga video_bochs video_cirrus jpeg png gfxterm ; do echo "insmod $i" >> boot/grub/x86_64-efi/grub.cfg ; done
-
-		echo "source /boot/grub/grub.cfg" >> boot/grub/x86_64-efi/grub.cfg
-
-		pushd "$tempdir"
-			# make a tarred "memdisk" to embed in the grub image
-			tar -cvf memdisk boot
-
-			# make the grub image
-			grub-mkimage -O "x86_64-efi" -m "memdisk" -o "bootx64.efi" -p '(memdisk)/boot/grub' \
-									search iso9660 configfile normal memdisk tar \
-									part_msdos part_gpt fat exfat ext2 ext4 \
-									chain boot linux linuxefi
-		popd
-
-		# copy the grub image to efi/boot (to go later in the device's root)
-		cp "$tempdir"/bootx64.efi efi/boot
-
-		#######################
-		## Make the boot image "boot/grub/efiboot.img"
-		dd if=/dev/zero of=boot/grub/efiboot.img bs=1K count=1440
-		mkdosfs -F 12 boot/grub/efiboot.img
-		mkdir img-mnt
-		mount -o loop boot/grub/efiboot.img img-mnt
-		mkdir -p img-mnt/efi/boot
-		cp "$tempdir"/bootx64.efi img-mnt/efi/boot/
-		umount img-mnt
-		rm -rf img-mnt
-		#######################
-
-		# copy modules and font
-		cp /usr/lib/grub/x86_64-efi/* boot/grub/x86_64-efi/
-
-		# if this doesn't work try another font from the same place (grub's default, unicode.pf2, is much larger)
-		# Either of these will work, and they look the same to me. Unicode seems to work with qemu. -fsr
-		# cp /usr/share/grub/ascii.pf2 boot/grub/font.pf2
-		cp /usr/share/grub/unicode.pf2 boot/grub/font.pf2
-
-		# doesn't need to be root-owned
-		chown -R 1000:1000 $(pwd) 2>/dev/null
-
-		# Cleanup
-		rm -rf "$tempdir"
-	popd
-
-	# Copy files to iso
-	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/boot "$work_dir"/iso/
-	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable "$efi_work"/efi  "$work_dir"/iso/
+prepare_grub_files() {
+	# Copy GRUB template, fonts, themes
 	cp "$grub_template" "$work_dir"/iso/boot/grub/grub.cfg
+	cp /usr/share/grub/unicode.pf2 "$work_dir"/iso/boot/grub/fonts/
+	cp -r /usr/share/grub/themes/Vimix "$work_dir"/iso/boot/grub/themes/
 }
 
 set_boot_options() {
@@ -383,8 +392,8 @@ squash_filesystem() {
 
 make_iso_fs() {
 	echo "Creating ISO: "$snapshot_dir"/"$filename""
-	xorriso -as mkisofs -r -J -joliet-long -iso-level 3 -e boot/grub/efiboot.img -no-emul-boot \
-	-V "$volid" -o "$snapshot_dir"/"$filename" iso/
+	grub-mkrescue --themes="" -V "$volid" -o "$snapshot_dir"/"$filename" iso/ \
+	|| { echo -e "\n Error: grub-mkrescue failed." ; exit 1 ; }
 	sync
 	echo "ISO created, finished..."
 }
@@ -446,7 +455,7 @@ choose_task() {
 	while true; do
 		echo "Choose a task.
 
-1. Create a snapshot (uefi enabled)
+1. Create a snapshot (bios + uefi dual-boot)
 2. Exit"
 		read ans
 		case $ans in
@@ -462,7 +471,8 @@ choose_task() {
 			rebuild_initrd
 			edit_system
 			get_filename
-			mkefi
+			#mkefi
+			prepare_grub_files
 			set_boot_options
 			#if [[ $edit_iso_files = "yes" ]]; then
 			#	edit_iso_files
