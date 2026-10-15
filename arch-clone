@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # arch-clone by 2kpr
 # https://github.com/2kpr/arch-clone
@@ -7,7 +7,7 @@
 # This is free software with NO WARRANTY. Use at your own risk!
 
 #	Required Packages:
-#	grub, mtools, grub-theme-vimix, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv
+#	grub, grub-theme-vimix, mtools, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv
 
 version="2.0.0"
 
@@ -49,10 +49,15 @@ done
 
 current_directory=$(pwd)
 configfile="$current_directory/settings.conf"
+snapshot_excludes="$current_directory/exclude.conf"
+grub_template="$current_directory/grub.cfg"
 
 [[ -e "$configfile" ]] || { echo "Configuration file, $configfile  is missing." ; exit 1 ; }
-
 source "$configfile"
+
+echo -e "> Config file: $configfile"
+echo -e "> Excludes file: $snapshot_excludes"
+echo -e "> Grub template file: $grub_template"
 
 # DISTRO comes from settings.conf (distro_name). Fall back to "Arch" if unset or empty.
 if [[ -z "$distro_name" ]]; then
@@ -63,20 +68,11 @@ fi
 # Default ISO label, GRUB uses it to find the ISO
 [[ -n "$volid" ]] || volid="archlive"
 
-snapshot_excludes="$current_directory/exclude.conf"
-grub_template="$current_directory/grub.cfg"
-splash_image="$current_directory/splash.png"
-
-echo "Config file: $configfile"
-echo "Excludes file: $snapshot_excludes"
-echo "Grub template file: $grub_template"
-echo "Splash image file: $splash_image"
-
 # Record errors in a logfile.
 exec 2>"$error_log"
 
 if [[ "$DEBUG" = "yes" ]]; then
-  set -x
+	set -x
 fi
 
 check_copies() {
@@ -95,9 +91,6 @@ check_copies() {
 		snapshot_count="0"
 		snapshot_size="0 bytes"
 	fi
-
-	# Create a message to say whether the filesystem copy will be saved or not.
-	save_message=$(echo "* The temporary copy of the filesystem will be created\nat $work_dir/fs and removed when this program finishes.")
 }
 
 check_directories() {
@@ -127,13 +120,12 @@ check_directories() {
 	fi
 
 	# Check that work directories exist or create them.
-	if [[ -d $work_dir ]]; then
-		rm -rf "$work_dir"
-	fi
+	#if [[ -d $work_dir ]]; then
+	#	rm -rf "$work_dir"
+	#fi
 	mkdir -p "$work_dir"/iso/arch/boot/x86_64
 	mkdir -p "$work_dir"/iso/arch/x86_64
 	mkdir -p "$work_dir"/iso/boot/grub
-	mkdir -p "$work_dir"/iso/boot/grub/fonts
 	mkdir -p "$work_dir"/iso/boot/grub/themes
 	mkdir -p "$work_dir"/fs
 }
@@ -152,24 +144,23 @@ rebuild_initrd() {
 		exit 1
 	fi
 
-	mkinitcpio_file="MODULES=(loop dm-snapshot isofs squashfs $mkinitcpio_modules)"$'\n'
-	mkinitcpio_file+="HOOKS=($(echo "$mkinitcpio_hooks" | sed -n 's/ block/ archiso archiso_loop_mnt block/p' | sed -n 's/ systemd/ udev/p'))"$'\n'
-	mkinitcpio_file+="COMPRESSION=\"zstd\""$'\n'
-	mkinitcpio_file+="COMPRESSION_OPTIONS=(-15 -T0)"
-	echo "$mkinitcpio_file" > ${work_dir}/mkinitcpio.conf
+	mkinitcpio_file="MODULES=(loop dm-snapshot isofs squashfs $mkinitcpio_modules)\n"
+	mkinitcpio_file+="HOOKS=($(echo "$mkinitcpio_hooks" | sed -n 's/ block/ archiso archiso_loop_mnt block/p'))\n"
+	mkinitcpio_file+="COMPRESSION=\"zstd\"\n"
+	mkinitcpio_file+="COMPRESSION_OPTIONS=(-T0 -9)"
+	echo -e "$mkinitcpio_file" > ${work_dir}/mkinitcpio.conf
 	mkinitcpio -c ${work_dir}/mkinitcpio.conf -g ${work_dir}/iso/arch/boot/x86_64/${initrd_image##*/}
-	#-k $(ls -1 /usr/lib/modules | head -n 1)
 }
 
 housekeeping() {
 	# Check that kernel and initrd exist
 	if [[ -e "$kernel_image" ]]; then
-		echo "Kernel image exists: $kernel_image"
+		echo -e "\n> Kernel image exists: $kernel_image"
 	else
 		kernel_message="Warning: kernel image is missing."
 	fi
 	if [[ -e "$initrd_image" ]]; then
-		echo "Initrd image exists: $initrd_image"
+		echo -e "> Initrd image exists: $initrd_image\n"
 	else
 		initrd_message="Warning: initrd image is missing."
 	fi
@@ -191,7 +182,8 @@ copy_kernelinitrd() {
 }
 
 copy_filesystem() {
-	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable / fs/ --exclude="$work_dir" --exclude="$snapshot_dir" --exclude-from="$snapshot_excludes"
+	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable --delete \
+		--exclude="$work_dir" --exclude="$snapshot_dir" --exclude-from="$snapshot_excludes" / fs/
 }
 
 edit_system() {
@@ -236,7 +228,7 @@ get_filename() {
 prepare_grub_files() {
 	# Copy GRUB template, fonts, themes
 	cp "$grub_template" "$work_dir"/iso/boot/grub/grub.cfg
-	cp /usr/share/grub/unicode.pf2 "$work_dir"/iso/boot/grub/fonts/
+	#cp /usr/share/grub/unicode.pf2 "$work_dir"/iso/boot/grub/fonts/
 	cp -r /usr/share/grub/themes/Vimix "$work_dir"/iso/boot/grub/themes/
 }
 
@@ -250,56 +242,42 @@ set_boot_options() {
 
 squash_filesystem() {
 	echo "Squashing the filesystem..."
-	mksquashfs fs/ iso/arch/x86_64/airootfs.sfs ${mksq_comp} -noappend -b 1M \
+	mksquashfs fs/ iso/arch/x86_64/airootfs.sfs ${mksq_comp} -noappend -b 1M -no-fragments \
 	|| { echo -e "\n Error: mksquashfs failed. Exiting..." ; exit 1 ; }
 
 	# This code is redundant, because $work_dir gets removed later, but
 	# it might help by making more space on the hard drive for the iso.
-	rm -rf fs
+	#rm -rf fs
 }
 
 make_iso_fs() {
 	echo "Creating ISO: "$snapshot_dir"/"$filename""
-	grub-mkrescue --themes="" -V "$volid" -o "$snapshot_dir"/"$filename" iso/ \
-	|| { echo -e "\n Error: grub-mkrescue failed." ; exit 1 ; }
+	grub-mkrescue --themes="" --locales="" --fonts="" \
+				-V "$volid" -o "$snapshot_dir"/"$filename" iso/ \
+	|| { echo -e "\n Error: grub-mkrescue failed. Exiting..." ; exit 1 ; }
 	sync
 	echo "ISO created, finished..."
 }
 
-cleanup() {
-	echo "Cleaning..."
-	rm -rf "$work_dir"
-}
+#cleanup() {
+#	echo "Cleaning..."
+#	rm -rf "$work_dir"
+#}
 
-choose_task() {
-	while true; do
-		echo "Choose a task.
-
-1. Create a snapshot (bios + uefi dual-boot)
-2. Exit"
-		read ans
-		case $ans in
-		1) # Create snapshot
-			echo "This may take a moment while the program checks for free space."
-			check_copies
-			check_directories
-			housekeeping
-			cd "$work_dir"
-			copy_kernelinitrd
-			copy_filesystem
-			rebuild_initrd
-			edit_system
-			get_filename
-			prepare_grub_files
-			set_boot_options
-			squash_filesystem
-			make_iso_fs
-			cleanup
-			echo -e "\n\tAll finished!\n"
-			exit 0 ;;
-		[2qQxX]) exit 0 ;;
-		esac
-	done
-}
-
-choose_task
+echo -e "\n*\n* This may take a moment while the program checks for free space.\n*"
+check_copies
+check_directories
+housekeeping
+cd "$work_dir"
+copy_kernelinitrd
+copy_filesystem
+rebuild_initrd
+edit_system
+get_filename
+prepare_grub_files
+set_boot_options
+squash_filesystem
+make_iso_fs
+#cleanup
+echo -e "\n\tAll finished!\n"
+exit 0
