@@ -18,14 +18,12 @@ currently running Arch install.
 
 Make sure to view and edit to your liking at least the 2
 included config files:
- - settings.conf, which handles the basic config options/paths
- - exclude.conf, which lists the files/folders excluded during
-   creation of the iso
+ - settings.conf, which handles the basic config options/paths.
+ - exclude.conf, which lists the files/folders excluded during creation of the iso.
 
 valid options:
  -h, --help	show this help text
- -v, --version	display the version information
-"
+ -v, --version	display the version information"
 
 while [[ $1 == -* ]]; do
 	case "$1" in
@@ -48,6 +46,8 @@ done
 [[ $(id -u) -eq 0 ]] || { echo -e "\n\t You need to be root!\n" ; exit 1 ; }
 
 current_directory=$(pwd)
+cat "$current_directory"/exclude/* > "$current_directory"/exclude.conf
+
 configfile="$current_directory/settings.conf"
 snapshot_excludes="$current_directory/exclude.conf"
 grub_template="$current_directory/grub.cfg"
@@ -170,8 +170,7 @@ $initrd_message
 
 Make sure the kernel_image and/or initrd_image
 set in the config file are correct, and check
-that the boot menu is also correct.
-"
+that the boot menu is also correct."
 		exit 1
 	fi
 }
@@ -259,10 +258,11 @@ make_iso_fs() {
 	echo "ISO created, finished..."
 }
 
-#cleanup() {
-#	echo "Cleaning..."
-#	rm -rf "$work_dir"
-#}
+cleanup() {
+	echo "Cleaning..."
+	#rm -rf "$work_dir"
+	rm "$current_directory"/exclude.conf
+}
 
 echo -e "\n*\n* This may take a moment while the program checks for free space.\n*"
 check_copies
@@ -278,6 +278,6 @@ prepare_grub_files
 set_boot_options
 squash_filesystem
 make_iso_fs
-#cleanup
+cleanup
 echo -e "\n\tAll finished!\n"
 exit 0
