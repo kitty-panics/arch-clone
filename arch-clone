@@ -6,10 +6,10 @@
 # License: GPL-3
 # This is free software with NO WARRANTY. Use at your own risk!
 
-#	Required Packages:
-#	grub, grub-theme-vimix, mtools, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv
+# Required Packages (Arch Linux):
+# grub, grub-theme-vimix, mtools, dosfstools, mkinitcpio-archiso, squashfs-tools, xorriso, rsync, pv
 
-version="2.0.0"
+version="3.0.0"
 
 help_text="Usage: $0 [option]
 
@@ -46,18 +46,18 @@ done
 [[ $(id -u) -eq 0 ]] || { echo -e "\n\t You need to be root!\n" ; exit 1 ; }
 
 current_directory=$(pwd)
-cat "$current_directory"/exclude/* > "$current_directory"/exclude.conf
+cat "$current_directory"/exclude/*.conf > "$current_directory"/exclude.conf
 
 configfile="$current_directory/settings.conf"
-snapshot_excludes="$current_directory/exclude.conf"
+rsync_excludes="$current_directory/exclude.conf"
 grub_template="$current_directory/grub.cfg"
 
-[[ -e "$configfile" ]] || { echo "Configuration file, $configfile  is missing." ; exit 1 ; }
+[[ -e "$configfile" ]] || { echo "Configuration file, $configfile is missing." ; exit 1 ; }
 source "$configfile"
 
 echo -e "> Config file: $configfile"
-echo -e "> Excludes file: $snapshot_excludes"
-echo -e "> Grub template file: $grub_template"
+echo -e "> Excludes file: $rsync_excludes"
+echo -e "> GRUB template file: $grub_template"
 
 # DISTRO comes from settings.conf (distro_name). Fall back to "Arch" if unset or empty.
 if [[ -z "$distro_name" ]]; then
@@ -71,63 +71,22 @@ fi
 # Record errors in a logfile.
 exec 2>"$error_log"
 
-if [[ "$DEBUG" = "yes" ]]; then
-	set -x
-fi
-
-check_copies() {
-	# Function to check for old snapshots and filesystem copy and their total size
-	if [[ -d $snapshot_dir ]]; then
-		if ls "$snapshot_dir"/*.iso > /dev/null; then
-			snapshot_count=$(ls "$snapshot_dir"/*.iso | wc -l)
-		else
-			snapshot_count="0"
-		fi
-		snapshot_size=$(du -sh "$snapshot_dir" | awk '{print $1}')
-		if [[ -z $snapshot_size ]]; then
-			snapshot_size="0 bytes"
-		fi
-	else
-		snapshot_count="0"
-		snapshot_size="0 bytes"
-	fi
-}
+case "${DEBUG,,}" in
+	yes|true|1|on) set -x ;;
+esac
 
 check_directories() {
-	# Create snapshot_dir and work_dir if necessary.
-	# Don't use /media/* for $snapshot_dir or $work_dir unless it is a mounted filesystem
-	snapdir_is_remote=$(echo ${snapshot_dir} | awk -F / '{ print "/" $2 "/" $3 }' | grep /media/)
-	workdir_is_remote=$(echo ${work_dir} | awk -F / '{ print "/" $2 "/" $3 }' | grep /media/)
+	# Check that fs_dir, work_dir, iso_dir exists
+	for dir in "$fs_dir" "$work_dir" "$iso_dir"; do
+		if [[ ! -d "$dir" ]]; then
+			mkdir -p "$dir" && chmod 755 "$dir" || { echo "无法创建 $dir" >&2; exit 1; }
+		fi
+	done
 
-	if [ -n "$snapdir_is_remote" ] && cat /proc/mounts | grep -q ${snapdir_is_remote}; then
-		echo "$snapshot_dir is mounted"
-	elif [ -n "$snapdir_is_remote" ]; then
-		echo " Error.. The selected snapshot directory cannot be accessed. Do you need to mount it?"
-		exit 1
-	fi
-
-	if [ -n "$workdir_is_remote" ] && cat /proc/mounts | grep -q ${workdir_is_remote}; then
-		echo "$work_dir is mounted"
-	elif [ -n "$workdir_is_remote" ]; then
-		echo " Error.. The selected work directory cannot be accessed. Do you need to mount it?"
-		exit 1
-	fi
-
-	# Check that snapshot_dir exists
-	if ! [[ -d $snapshot_dir ]]; then
-		mkdir -p "$snapshot_dir"
-		chmod 777 "$snapshot_dir"
-	fi
-
-	# Check that work directories exist or create them.
-	#if [[ -d $work_dir ]]; then
-	#	rm -rf "$work_dir"
-	#fi
-	mkdir -p "$work_dir"/iso/arch/boot/x86_64
-	mkdir -p "$work_dir"/iso/arch/x86_64
-	mkdir -p "$work_dir"/iso/boot/grub
-	mkdir -p "$work_dir"/iso/boot/grub/themes
-	mkdir -p "$work_dir"/fs
+	mkdir -p \
+		  "$work_dir/iso/arch/boot/x86_64" \
+		  "$work_dir/iso/arch/x86_64" \
+		  "$work_dir/iso/boot/grub/themes"
 }
 
 rebuild_initrd() {
@@ -144,94 +103,77 @@ rebuild_initrd() {
 		exit 1
 	fi
 
-	mkinitcpio_file="MODULES=(loop dm-snapshot isofs squashfs $mkinitcpio_modules)\n"
-	mkinitcpio_file+="HOOKS=($(echo "$mkinitcpio_hooks" | sed -n 's/ block/ archiso archiso_loop_mnt block/p'))\n"
-	mkinitcpio_file+="COMPRESSION=\"zstd\"\n"
-	mkinitcpio_file+="COMPRESSION_OPTIONS=(-T0 -9)"
-	echo -e "$mkinitcpio_file" > ${work_dir}/mkinitcpio.conf
-	mkinitcpio -c ${work_dir}/mkinitcpio.conf -g ${work_dir}/iso/arch/boot/x86_64/${initrd_image##*/}
-}
+	new_hooks=$(echo "$mkinitcpio_hooks" | sed 's/ block/ archiso archiso_loop_mnt block/')
+	[[ "$new_hooks" != "$mkinitcpio_hooks" ]] || { echo "Error: 'block' not found in HOOKS" >&2; exit 1; }
+	cat > "${work_dir}/mkinitcpio.conf" <<EOF
+MODULES=(loop dm-snapshot isofs squashfs $mkinitcpio_modules)
+HOOKS=($new_hooks)
+COMPRESSION="zstd"
+COMPRESSION_OPTIONS=(-T0 -15)
+EOF
 
-housekeeping() {
-	# Check that kernel and initrd exist
-	if [[ -e "$kernel_image" ]]; then
-		echo -e "\n> Kernel image exists: $kernel_image"
-	else
-		kernel_message="Warning: kernel image is missing."
-	fi
-	if [[ -e "$initrd_image" ]]; then
-		echo -e "> Initrd image exists: $initrd_image\n"
-	else
-		initrd_message="Warning: initrd image is missing."
-	fi
-	if [[ -n "$kernel_message" ]] || [[ -n "$initrd_message" ]]; then
-		echo "$kernel_message
-$initrd_message
-
-Make sure the kernel_image and/or initrd_image
-set in the config file are correct, and check
-that the boot menu is also correct."
-		exit 1
-	fi
+	mkinitcpio -c "${work_dir}"/mkinitcpio.conf \
+			   -g "${work_dir}"/iso/arch/boot/x86_64/"${initrd_image##*/}"
 }
 
 copy_kernelinitrd() {
+	[[ -f "$kernel_image" ]] || { echo "kernel_image missing: $kernel_image" >&2; exit 1; }
 	cp "$kernel_image" "$work_dir"/iso/arch/boot/x86_64/
-	cp "$initrd_image" "$work_dir"/iso/arch/boot/x86_64/
 }
 
 copy_filesystem() {
-	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable --delete \
-		--exclude="$work_dir" --exclude="$snapshot_dir" --exclude-from="$snapshot_excludes" / fs/
+	rsync -aAXH --numeric-ids --info=PROGRESS2 --human-readable --delete --delete-excluded \
+		  --filter="merge $rsync_excludes" / "$fs_dir"/
 }
 
 edit_system() {
 	# /etc/fstab should exist, even if it's empty,
 	# to prevent error messages at boot
-	mv "$work_dir"/fs/etc/fstab "$work_dir"/fs/etc/fstab.bak
-	touch "$work_dir"/fs/etc/fstab
+	mv "$fs_dir"/etc/fstab "$fs_dir"/etc/fstab.bak
+	touch "$fs_dir"/etc/fstab
 
 	# Blank out systemd machine id. If it does not exist, systemd-journald
 	# will fail, but if it exists and is empty, systemd will automatically
 	# set up a new unique ID.
-	if [ -e "$work_dir"/fs/etc/machine-id ]; then
-		rm -f "$work_dir"/fs/etc/machine-id
-		: > "$work_dir"/fs/etc/machine-id
-	fi
+	: > "$fs_dir"/etc/machine-id
 
 	# add some basic files to /dev
-	mknod -m 622 "$work_dir"/fs/dev/console c 5 1
-	mknod -m 666 "$work_dir"/fs/dev/null c 1 3
-	mknod -m 666 "$work_dir"/fs/dev/zero c 1 5
-	mknod -m 666 "$work_dir"/fs/dev/ptmx c 5 2
-	mknod -m 666 "$work_dir"/fs/dev/tty c 5 0
-	mknod -m 444 "$work_dir"/fs/dev/random c 1 8
-	mknod -m 444 "$work_dir"/fs/dev/urandom c 1 9
-	chown -v root:tty "$work_dir"/fs/dev/{console,ptmx,tty}
+	mknod -m 622 "$fs_dir"/dev/console c 5 1
+	mknod -m 666 "$fs_dir"/dev/null c 1 3
+	mknod -m 666 "$fs_dir"/dev/zero c 1 5
+	mknod -m 666 "$fs_dir"/dev/ptmx c 5 2
+	mknod -m 666 "$fs_dir"/dev/tty c 5 0
+	mknod -m 444 "$fs_dir"/dev/random c 1 8
+	mknod -m 444 "$fs_dir"/dev/urandom c 1 9
+	chown -v root:tty "$fs_dir"/dev/{console,ptmx,tty}
 
-	ln -sv /proc/self/fd "$work_dir"/fs/dev/fd
-	ln -sv /proc/self/fd/0 "$work_dir"/fs/dev/stdin
-	ln -sv /proc/self/fd/1 "$work_dir"/fs/dev/stdout
-	ln -sv /proc/self/fd/2 "$work_dir"/fs/dev/stderr
-	ln -sv /proc/kcore "$work_dir"/fs/dev/core
-	mkdir -v "$work_dir"/fs/dev/shm
-	mkdir -v "$work_dir"/fs/dev/pts
-	chmod 1777 "$work_dir"/fs/dev/shm
+	ln -sv /proc/self/fd "$fs_dir"/dev/fd
+	ln -sv /proc/self/fd/0 "$fs_dir"/dev/stdin
+	ln -sv /proc/self/fd/1 "$fs_dir"/dev/stdout
+	ln -sv /proc/self/fd/2 "$fs_dir"/dev/stderr
+	ln -sv /proc/kcore "$fs_dir"/dev/core
+	mkdir -v "$fs_dir"/dev/shm
+	mkdir -v "$fs_dir"/dev/pts
+	chmod 1777 "$fs_dir"/dev/shm
 }
 
 get_filename() {
-	snapshot_datetime=$(date +%Y%m%d)
-	filename="$snapshot_basename"-"$snapshot_datetime".iso
+	#snapshot_datetime=$(date +%Y%m%d)
+	#filename="$iso_basename"-"$snapshot_datetime".iso
+	snapshot_datetime=$(date +%Y)
+	filename="$iso_basename"_v"$snapshot_datetime".iso
 }
 
 prepare_grub_files() {
 	# Copy GRUB template, fonts, themes
 	cp "$grub_template" "$work_dir"/iso/boot/grub/grub.cfg
 	#cp /usr/share/grub/unicode.pf2 "$work_dir"/iso/boot/grub/fonts/
-	cp -r /usr/share/grub/themes/Vimix "$work_dir"/iso/boot/grub/themes/
+	cp -r /usr/share/grub/themes/"$grub_theme" "$work_dir"/iso/boot/grub/themes/
 }
 
 set_boot_options() {
+	# Modify the theme.
+	sed -i "s:\${grub_theme}:$grub_theme:g" "$work_dir"/iso/boot/grub/grub.cfg
 	# Modify the boot menu.
 	sed -i "s:\${DISTRO}:$DISTRO:g" "$work_dir"/iso/boot/grub/grub.cfg
 	sed -i "s:\${kernel_image}:${kernel_image##*/}:g" "$work_dir"/iso/boot/grub/grub.cfg
@@ -241,18 +183,14 @@ set_boot_options() {
 
 squash_filesystem() {
 	echo "Squashing the filesystem..."
-	mksquashfs fs/ iso/arch/x86_64/airootfs.sfs ${mksq_comp} -noappend -b 1M -no-fragments \
+	mksquashfs "$fs_dir"/ $work_dir/iso/arch/x86_64/airootfs.sfs ${mksq_comp} -noappend -b 1M -no-fragments \
 	|| { echo -e "\n Error: mksquashfs failed. Exiting..." ; exit 1 ; }
-
-	# This code is redundant, because $work_dir gets removed later, but
-	# it might help by making more space on the hard drive for the iso.
-	#rm -rf fs
 }
 
 make_iso_fs() {
-	echo "Creating ISO: "$snapshot_dir"/"$filename""
+	echo "Creating ISO: $iso_dir/$filename"
 	grub-mkrescue --themes="" --locales="" --fonts="" \
-				-V "$volid" -o "$snapshot_dir"/"$filename" iso/ \
+				-V "$volid" -o "$iso_dir"/"$filename" "$work_dir"/iso/ \
 	|| { echo -e "\n Error: grub-mkrescue failed. Exiting..." ; exit 1 ; }
 	sync
 	echo "ISO created, finished..."
@@ -260,15 +198,13 @@ make_iso_fs() {
 
 cleanup() {
 	echo "Cleaning..."
+	#rm -rf "$fs_dir"
 	#rm -rf "$work_dir"
 	rm "$current_directory"/exclude.conf
 }
 
 echo -e "\n*\n* This may take a moment while the program checks for free space.\n*"
-check_copies
 check_directories
-housekeeping
-cd "$work_dir"
 copy_kernelinitrd
 copy_filesystem
 rebuild_initrd
